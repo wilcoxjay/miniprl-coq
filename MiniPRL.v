@@ -1032,6 +1032,20 @@ Module rules.
       refine (_ <- assume_sb (Nat.eq_dec (S i) k) ;; _).
       exact (nullary_derivation derivation.Uni_Eq).
     Defined.
+
+    Definition Cumulative : tactic.t.
+      intros R n g.
+      destruct g.
+      revert context.
+      refine match goal with
+             | expr.Eq A B (expr.Uni (S i)) => fun ctx => _
+             | _ => fun _ => tactic_monad.fail
+             end. clear goal n t n1 n2.
+      rename n0 into n.
+      refine (tactic_monad.ret (tactic_result.Make _ [n]
+            (fun h => derivation.Cumulative (hlist.get h member.Here))
+            [goal.Make ctx (expr.Eq A B (expr.Uni i))])).
+    Defined.
   End uni.
 
   Module general.
