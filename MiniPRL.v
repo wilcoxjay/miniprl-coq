@@ -685,10 +685,10 @@ Module tactic_result.
 
      I think it's fair to say that this is really complicated and probably worth
      skipping on a first reading. However, it means that we rule out entire
-     classes of bugs since tactics tactics are never exposed to ill-scoped goals
-     or derivations or to a list of goals or derivations with the wrong
-     length. This implies, for example, that the `MalformedEvidence` exception
-     is never thrown in MiniPRL, assuming I have not accidently fixed bugs while
+     classes of bugs since tactics are never exposed to ill-scoped goals or
+     derivations or to a list of goals or derivations with the wrong length.
+     This implies, for example, that the `MalformedEvidence` exception is never
+     thrown in MiniPRL, assuming I have not accidently fixed bugs while
      porting. *)
   Record t (D G : nat -> Type) n : Type :=
     Make {
@@ -707,8 +707,8 @@ Module Type TACTIC.
   (* Okay, now this is kind of interesting. We've been carefully tracking
      binding in the type system, but we don't want users of the tactics to have
      to annotate them with the number of hypotheses in the contexts. So instead,
-     we require tactics to be polymorphic in the number of hypotheses. If they
-     don't like what they see, they are free to fail in the monad.
+     we require tactics to be polymorphic in the number of hypotheses. If a
+     tactics doesn't like what it sees, it's free to fail in the monad.
 
      I first tried indexing tactics by the number of hypotheses, but this makes
      it really hard to express the `split` and `next` combinators
@@ -818,7 +818,7 @@ Module P := primitive_tactics tactic.
 
 Module rules.
   (* We're finally ready for the rules. As discussed above, our typing
-     discipline guarantees several invariants of refiner, including
+     discipline guarantees several invariants of the refiner, including
      well-scopedness. Indeed, a few de Bruijn bugs in MiniPRL's rules were found
      while porting :) (To be fair, de Bruijn bugs cause code to fail so hard
      that they likely could have been found by more traditional methods.)*)
@@ -1107,7 +1107,8 @@ Eval compute in refiner.prove (expr.Eq expr.tt expr.tt expr.Unit) rules.unit.TTE
 Module ast.
   (* Okay so it turns out that writing de Bruijn indices by hand is basically
      impossible. An AST allows writing terms using string names. ASTs can be
-     converted to expressions. *)
+     converted to expressions by a partial operation that fails if things aren't
+     well-scoped. *)
   Inductive t : Type :=
   | Var : String.string -> t
   | Lam : String.string -> t -> t
@@ -1123,6 +1124,7 @@ Module ast.
   | Cust : guid.t -> t
   .
 
+  (* Helper function to find the first occurence of a particular value in a vector. *)
   Fixpoint v_index_of {A} (A_eq_dec : forall a1 a2 : A, {a1 = a2} + {a1 <> a2})
            (a : A)
            {n} (v : Vector.t A n) : option (Fin.t n) :=
