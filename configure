@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+DEPS=(StructTact)
+CANARIES=("StructTact.StructTactics" "Build StructTact before building MiniPRL")
+
+source coqproject.sh
