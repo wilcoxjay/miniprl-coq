@@ -1,6 +1,6 @@
 (* A Coq port of MiniPRL [1]. While we make relatively heavy use of dependent
    types to keep track of bound variables, there aren't really any proofs. A
-   longer term goal is to implement some the ideas of Verified NuPRL [2].
+   longer term goal is to implement some of the ideas of Verified NuPRL [2].
 
    [1]: https://github.com/jozefg/miniprl
    [2]: http://www.nuprl.org/html/Nuprl2Coq/ *)

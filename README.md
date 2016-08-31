@@ -1,13 +1,17 @@
-A Coq port of [MiniPRL](https://github.com/jozefg/miniprl). While we
-make relatively heavy use of dependent types to keep track of bound
-variables, there aren't really any proofs. A longer term goal is to
-implement some the ideas of [Verified
-NuPRL](http://www.nuprl.org/html/Nuprl2Coq/).
+# miniprl-coq
 
+This is a Coq port of
+[MiniPRL](https://github.com/jozefg/miniprl). While it makes
+relatively heavy use of dependent types to keep track of bound
+variables, there aren't really any proofs yet. A longer term goal is
+to implement some of the ideas of
+[Verified NuPRL](http://www.nuprl.org/html/Nuprl2Coq/) by showing the
+rules of the proof theory sound with respect to the underlying
+computation system and its type theory.
 
-# Build instructions
+## Build instructions
 
-## Overview
+### Overview
 
 This project requires Coq 8.5pl1 (might work with other versions of
 Coq 8.5, but certianly not with older versions). It furthermore
@@ -17,7 +21,7 @@ install `StructTact` as a sibling directory to this project, it will
 be detected automatically. Otherwise you will need to edit
 `StructTact_PATH` in `configure`.
 
-## Example commands
+### Example commands
 
 Something like the following should work assuming a standard unix
 system with Coq 8.5pl1 installed.
