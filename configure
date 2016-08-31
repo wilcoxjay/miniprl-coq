@@ -3,4 +3,6 @@
 DEPS=(StructTact)
 CANARIES=("StructTact.StructTactics" "Build StructTact before building MiniPRL")
 
+StructTact_PATH="../StructTact"
+
 source coqproject.sh
