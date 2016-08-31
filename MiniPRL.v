@@ -77,7 +77,11 @@ Module expr.
   | Lam : forall n, t (S n) -> t n
   | App : forall n, t n -> t n -> t n
   | Pi : forall n, t n -> t (S n) -> t n
-  (* | Pair : forall n, t n -> t n -> t n *)
+
+  | Pair : forall n, t n -> t n -> t n
+  | Fst : forall n, t n -> t n
+  | Snd : forall n, t n -> t n
+  | Sig : forall n, t n -> t (S n) -> t n
 
   | tt : forall {n}, t n
   | Unit : forall {n}, t n
@@ -125,6 +129,10 @@ Module expr.
     | Lam e => Lam (lift (S c) e)
     | App e1 e2 => App (lift c e1) (lift c e2)
     | Pi e1 e2 => Pi (lift c e1) (lift (S c) e2)
+    | Pair e1 e2 => Pair (lift c e1) (lift c e2)
+    | Fst e => Fst (lift c e)
+    | Snd e => Snd (lift c e)
+    | Sig e1 e2 => Sig (lift c e1) (lift (S c) e2)
     | tt => tt
     | Unit => Unit
     | Eq e1 e2 e3 => Eq (lift c e1) (lift c e2) (lift c e3)
@@ -148,6 +156,10 @@ Module expr.
     | Lam e => fun v => Lam (rec_bind e v)
     | App e1 e2 => fun v => App (subst e1 v) (subst e2 v)
     | Pi e1 e2 => fun v => Pi (subst e1 v) (rec_bind e2 v)
+    | Pair e1 e2 => fun v => Pair (subst e1 v) (subst e2 v)
+    | Fst e => fun v => Fst (subst e v)
+    | Snd e => fun v => Snd (subst e v)
+    | Sig e1 e2 => fun v => Sig (subst e1 v) (rec_bind e2 v)
     | tt => fun _ => tt
     | Unit => fun _ => Unit
     | Eq e1 e2 e3 => fun v => Eq (subst e1 v) (subst e2 v) (subst e3 v)
@@ -181,6 +193,10 @@ Module expr.
     Hypothesis PLam : forall e, P (Lam e).
     Hypothesis PApp : forall e1 e2, P e1 -> P e2 -> P (App e1 e2).
     Hypothesis PPi : forall e1 e2, P e1 -> P (Pi e1 e2).
+    Hypothesis PPair : forall e1 e2, P e1 -> P e2 -> P (Pair e1 e2).
+    Hypothesis PFst : forall e, P e -> P (Fst e).
+    Hypothesis PSnd : forall e, P e -> P (Snd e).
+    Hypothesis PSig : forall e1 e2, P e1 -> P (Sig e1 e2).
     Hypothesis Ptt : P tt.
     Hypothesis Punit : P Unit.
     Hypothesis PEq : forall e1 e2 e3, P e1 -> P e2 -> P e3 -> P (Eq e1 e2 e3).
@@ -194,6 +210,10 @@ Module expr.
              | @Lam n e => _
              | App e1 e2 => _
              | Pi e1 e2 => _
+             | Pair e1 e2 => _
+             | Fst e => _
+             | Snd e => _
+             | Sig e1 e2 => _
              | tt => _
              | Unit => _
              | Eq e1 e2 e3 => _
@@ -204,6 +224,10 @@ Module expr.
       - apply PLam.
       - apply PApp; apply rec0.
       - apply PPi; apply rec0.
+      - apply PPair; apply rec0.
+      - apply PFst; apply rec0.
+      - apply PSnd; apply rec0.
+      - apply PSig; apply rec0.
       - apply Ptt.
       - apply Punit.
       - apply PEq; apply rec0.
@@ -221,6 +245,10 @@ Module expr.
              (PLam : forall e, P (Lam e))
              (PApp : forall e1 e2, P (App e1 e2))
              (PPi : forall e1 e2, P (Pi e1 e2))
+             (PPair : forall e1 e2, P (Pair e1 e2))
+             (PFst : forall e, P (Fst e))
+             (PSnd : forall e, P (Snd e))
+             (PSig : forall e1 e2, P (Sig e1 e2))
              (Ptt : P tt)
              (Punit : P Unit)
              (PEq : forall e1 e2 e3, P (Eq e1 e2 e3))
@@ -231,6 +259,10 @@ Module expr.
          PLam
          (fun e1 e2 _ _ => PApp e1 e2)
          (fun e1 e2 _ => PPi e1 e2)
+         (fun e1 e2 _ _ => PPair e1 e2)
+         (fun e _ => PFst e)
+         (fun e _ => PSnd e)
+         (fun e1 e2 _ => PSig e1 e2)
          Ptt
          Punit
          (fun e1 e2 e3 _ _ _ => PEq e1 e2 e3)
@@ -277,6 +309,50 @@ Module expr.
            | Pi e11 e12     => fun e2 =>
              match e2 as e2' return forall e11 e12, {Pi e11 e12 = e2'} + {Pi e11 e12 <> e2'} with
              | Pi e21 e22 => fun e11 e12 =>
+               match eq_dec _ e11 e21 with
+               | left _ =>
+                 match eq_dec _ e12 e22 with
+                 | left _ => left _
+                 | right _ => right _
+                 end
+               | right _ => right _
+               end
+             | _ => fun _ _ => right _
+             end e11 e12
+           | Pair e11 e12    => fun e2 =>
+             match e2 as e2' return forall e11 e12, {Pair e11 e12 = e2'} + {Pair e11 e12 <> e2'} with
+             | Pair e21 e22 => fun e11 e12 =>
+               match eq_dec _ e11 e21 with
+               | left _ =>
+                 match eq_dec _ e12 e22 with
+                 | left _ => left _
+                 | right _ => right _
+                 end
+               | right _ => right _
+               end
+             | _ => fun _ _ => right _
+             end e11 e12
+           | Fst e1         => fun e2 =>
+             match e2 as e2' return forall e1, {Fst e1 = e2'} + {Fst e1 <> e2'} with
+             | Fst e2 => fun e1 =>
+               match eq_dec _ e1 e2 with
+               | left _ => left _
+               | right _ => right _
+               end
+             | _ => fun _ => right _
+             end e1
+           | Snd e1         => fun e2 =>
+             match e2 as e2' return forall e1, {Snd e1 = e2'} + {Snd e1 <> e2'} with
+             | Snd e2 => fun e1 =>
+               match eq_dec _ e1 e2 with
+               | left _ => left _
+               | right _ => right _
+               end
+             | _ => fun _ => right _
+             end e1
+           | Sig e11 e12     => fun e2 =>
+             match e2 as e2' return forall e11 e12, {Sig e11 e12 = e2'} + {Sig e11 e12 <> e2'} with
+             | Sig e21 e22 => fun e11 e12 =>
                match eq_dec _ e11 e21 with
                | left _ =>
                  match eq_dec _ e12 e22 with
@@ -373,11 +449,18 @@ Module derivation.
   Inductive t : nat -> Type :=
   | Pi_Eq n (D_A : t n) (D_B : t (S n)) : t n
   | Pi_Intro n (i : nat) (D_A : t n) (D_B : t (S n)) : t n
-  | Pi_Elim n (x : Fin.t n) (a : expr.t n) (D_A : t n) (D_B : t (S n)) : t n
+  | Pi_Elim n (H : Fin.t n) (a : expr.t n) (D_A : t n) (D_B : t (S n)) : t n
 
   | Lam_Eq n (i : nat) (D_A : t n) (D_B : t (S n)) : t n
   | Ap_Eq n (i : nat) (pi_ty : expr.t n) (D_fun D_arg D_cod : t n) : t n
   | Fun_Ext n (D_lhs D_rhs : t n) (D : t (S n)) : t n
+
+  | Sig_Eq n (D_A : t n) (D_B : t (S n)) : t n
+  | Sig_Intro n (i : nat) (a : expr.t n) (D_A D_B : t n) (D_eq : t (S n)) : t n
+  | Sig_Elim n (H : Fin.t n) (D_C : t (S (S n))) : t n
+  | Pair_Eq n (i : nat) (D_A D_B : t n) (D_ty : t (S n)) : t n
+  | Fst_Eq n (sig_ty : expr.t n) (D : t n) : t n
+  | Snd_Eq n (i : nat) (sig_ty : expr.t n) (D_a D_B : t n) : t n
 
   | Unit_Eq {n} : t n
   | tt_Eq {n} : t n
@@ -410,6 +493,13 @@ Module extract.
     | derivation.Lam_Eq i D_A D_B => expr.tt
     | derivation.Ap_Eq i pi_ty D_fun D_arg D_cod => expr.tt
     | derivation.Fun_Ext D_lhs D_rhs H => expr.tt
+    | derivation.Sig_Eq _ _ => expr.tt
+    | derivation.Sig_Intro i a D_A D_B D_eq => (expr.Pair a (f D_B))
+    | derivation.Sig_Elim H D_C =>
+      expr.subst (f D_C) (expr.Snd (expr.Var H) :: expr.Fst (expr.Var H) :: expr.identity_subst _)
+    | derivation.Pair_Eq _ _ _ _ => expr.tt
+    | derivation.Fst_Eq _ _ => expr.tt
+    | derivation.Snd_Eq _ _ _ _ => expr.tt
     | derivation.Unit_Eq => expr.tt
     | derivation.tt_Eq => expr.tt
     | derivation.Unit_Intro => expr.tt
@@ -1110,6 +1200,178 @@ Module rules.
              goal.Make ctx (expr.Eq n1 n2 A1)])).
     Defined.
   End eq.
+
+  Module sig.
+    Definition Eq : tactic.t.
+      intros R n g.
+      destruct g as [ctx g].
+      revert ctx.
+      refine match g with
+             | expr.Eq l r (expr.Uni i) => _
+             | _ => fun _ => tactic_monad.fail
+             end. clear g n n1 t.
+      revert r.
+      refine match l with
+             | expr.Sig A B => fun r => _
+             | _ => fun _ _ => tactic_monad.fail
+             end. clear l n0.
+      revert A B.
+      refine match r with
+             | expr.Sig A' B' => fun A B ctx => _
+             | _ => fun _ _ _ => tactic_monad.fail
+             end. clear r n.
+      rename n0 into n.
+      refine (tactic_monad.ret (tactic_result.Make _ [n; S n]
+            (fun h => derivation.Sig_Eq (hlist.get h member.Here)
+                                     (hlist.get h (member.There member.Here)))
+            [goal.Make ctx (expr.Eq A A' (expr.Uni i));
+             goal.Make (context.cons A ctx) (expr.Eq B B' (expr.Uni i))])).
+    Defined.
+
+    Definition Intro (i : nat) (e : {n : nat & expr.t n}) : tactic.t.
+      intros R n g.
+      destruct g as [ctx g].
+      destruct e as [n' e].
+      refine (pf <- assume_sb (Nat.eq_dec n n') ;; _).
+      subst n'.
+      revert e ctx.
+      refine match g with
+             | expr.Sig A B => fun a ctx => _
+             | _ => fun _ _ => tactic_monad.fail
+             end. clear g n.
+      rename n0 into n.
+      refine (tactic_monad.ret (tactic_result.Make _ [n; n; S n]
+            (fun h => derivation.Sig_Intro i a
+                                        (hlist.get h member.Here)
+                                        (hlist.get h (member.There member.Here))
+                                        (hlist.get h (member.There (member.There member.Here))))
+            [goal.Make ctx (expr.Eq a a A);
+             goal.Make ctx (expr.subst B (a :: expr.identity_subst n));
+             goal.Make (context.cons A ctx) (expr.Eq B B (expr.Uni i))])).
+    Defined.
+
+    Definition Elim (H : nat) : tactic.t.
+      intros R n g.
+      destruct g as [ctx g].
+      refine (x <- assume_so (Fin.of_nat H n) ;; _).
+
+      refine (match context.nth ctx x in expr.t n0
+                    return context.t n0 -> expr.t n0 -> Fin.t n0 ->
+                           tactic_monad.t R (tactic.result n0)
+              with
+             | expr.Sig A B => fun ctx g x => _
+             | _ => fun _ _ _ => tactic_monad.fail
+             end ctx g x).
+      clear ctx0 g0 x0 n.
+      rename n0 into n.
+      refine (tactic_monad.ret (tactic_result.Make _ [S (S n)]
+            (fun h => derivation.Sig_Elim x
+                                       (hlist.get h member.Here))
+            [goal.Make (context.cons B (context.cons A ctx)) (expr.lift 0 (expr.lift 0 g))])).
+    Defined.
+
+    Definition PairEq (i : nat) : tactic.t.
+      intros R n g.
+      destruct g as [ctx g].
+      revert ctx.
+      refine match g with
+             | expr.Eq l r t => _
+             | _ => fun _ => tactic_monad.fail
+             end. clear g n.
+      revert r t.
+      refine match l with
+             | expr.Pair a b => fun r => _
+             | _ => fun _ _ _ => tactic_monad.fail
+             end. clear l n0.
+      revert a b.
+      refine match r with
+             | expr.Pair a' b' => fun a b t => _
+             | _ => fun _ _ _ _ => tactic_monad.fail
+             end. clear r n.
+      revert a b a' b'.
+      refine match t with
+             | expr.Sig A B => fun a b a' b' ctx => _
+             | _ => fun _ _ _ _ _ => tactic_monad.fail
+             end. clear t n0.
+      refine (tactic_monad.ret (tactic_result.Make _ [n; n; S n]
+            (fun h => derivation.Pair_Eq i
+                                       (hlist.get h member.Here)
+                                       (hlist.get h (member.There member.Here))
+                                       (hlist.get h (member.There (member.There member.Here))))
+            [goal.Make ctx (expr.Eq a a' A);
+             goal.Make ctx (expr.Eq b b' (expr.subst B (a :: expr.identity_subst n)));
+             goal.Make (context.cons A ctx) (expr.Eq B B (expr.Uni i))])).
+    Defined.
+
+
+    Definition FstEq (ty : {n : nat & expr.t n}) : tactic.t.
+      intros R n g.
+      destruct g as [ctx g].
+      destruct ty as [n' ty].
+      refine (pf <- assume_sb (Nat.eq_dec n n') ;; _).
+      subst n'.
+      revert ty ctx.
+      refine match g with
+             | expr.Eq l r t => _
+             | _ => fun _ _ => tactic_monad.fail
+             end. clear g n.
+      revert r t.
+      refine match l with
+             | expr.Fst m1 => fun r => _
+             | _ => fun _ _ _ _ => tactic_monad.fail
+             end. clear l n0.
+      revert m1.
+      refine match r with
+             | expr.Fst m2 => fun m1 t ty ctx => _
+             | _ => fun _ _ _ _ => tactic_monad.fail
+             end. clear r n.
+      revert m1 m2 t ctx.
+      refine match ty with
+             | expr.Sig A B => fun m1 m2 t ctx => _
+             | _ => fun _ _ _ _ => tactic_monad.fail
+             end. clear n0 ty.
+      refine (_ <- assume_sb (expr.eq_dec t A) ;; _).
+      refine (tactic_monad.ret (tactic_result.Make _ [n]
+            (fun h => derivation.Fst_Eq (expr.Sig A B) (hlist.get h member.Here))
+            [goal.Make ctx (expr.Eq m1 m2 (expr.Sig A B))])).
+    Defined.
+
+    Definition SndEq (i : nat) (ty : {n : nat & expr.t n}) : tactic.t.
+      intros R n g.
+      destruct g as [ctx g].
+      destruct ty as [n' ty].
+      refine (pf <- assume_sb (Nat.eq_dec n n') ;; _).
+      subst n'.
+      revert ty ctx.
+      refine match g with
+             | expr.Eq l r B' => _
+             | _ => fun _ _ => tactic_monad.fail
+             end. clear g n.
+      revert r B'.
+      refine match l with
+             | expr.Snd m1 => fun r => _
+             | _ => fun _ _ _ _ => tactic_monad.fail
+             end. clear l n0.
+      revert m1.
+      refine match r with
+             | expr.Snd m2 => fun m1 B' ty ctx => _
+             | _ => fun _ _ _ _ => tactic_monad.fail
+             end. clear r n.
+      revert m1 m2 B' ctx.
+      refine match ty with
+             | expr.Sig A B => fun m1 m2 B' ctx => _
+             | _ => fun _ _ _ _ => tactic_monad.fail
+             end. clear n0 ty.
+      refine (tactic_monad.ret (tactic_result.Make _ [n; n]
+            (fun h => derivation.Snd_Eq i (expr.Sig A B)
+                                     (hlist.get h member.Here)
+                                     (hlist.get h (member.There member.Here)))
+            [goal.Make ctx (expr.Eq m1 m2 (expr.Sig A B));
+             goal.Make ctx (expr.Eq (expr.subst B (expr.Fst m1 :: expr.identity_subst _))
+                                    B'
+                                    (expr.Uni i))])).
+    Defined.
+  End sig.
 End rules.
 Import rules.
 
@@ -1128,6 +1390,11 @@ Module ast.
   | Lam : String.string -> t -> t
   | App : t -> t -> t
   | Pi : String.string -> t -> t -> t
+
+  | Pair : t -> t -> t
+  | Fst : t -> t
+  | Snd : t -> t
+  | Sig : String.string -> t -> t -> t
 
   | tt : t
   | Unit : t
@@ -1174,6 +1441,26 @@ Module ast.
       | Some a1 =>
       match to_expr' (s :: v) a2 with None => None
       | Some a2 => Some (expr.Pi a1 a2)
+      end end
+    | Pair a1 a2 =>
+      match to_expr' v a1 with None => None
+      | Some a1 =>
+      match to_expr' v a2 with None => None
+      | Some a2 => Some (expr.Pair a1 a2)
+      end end
+    | Fst a =>
+      match to_expr' v a with None => None
+      | Some a => Some (expr.Fst a)
+      end
+    | Snd a =>
+      match to_expr' v a with None => None
+      | Some a => Some (expr.Snd a)
+      end
+    | Sig s a1 a2 =>
+      match to_expr' v a1 with None => None
+      | Some a1 =>
+      match to_expr' (s :: v) a2 with None => None
+      | Some a2 => Some (expr.Sig a1 a2)
       end end
     | tt => Some expr.tt
     | Unit => Some expr.Unit
@@ -1261,6 +1548,36 @@ Eval cbv in refiner.prove funext
                         pi.Elim 1
                           (existT _ _ ltac:(parse' ["x"; "H"; "g"; "f"; "B"; "A"] "x")) ;;
                           [ general.HypEq; general.Hyp 0 ]]]]]]]).
+
+Definition ast_proj1 : ast.t :=
+   ast.Pi "A" (ast.Uni 0)
+  (ast.Pi "B" (ast.Pi "_" "A" (ast.Uni 0))
+  (ast.Pi "_" (ast.Sig "x" "A" (ast.App "B" "x"))
+          "A")).
+
+Definition proj1 : expr.t 0 := ltac:(parse ast_proj1).
+
+Eval cbv in refiner.prove proj1
+  (pi.Intro 1;; [uni.Eq;
+   pi.Intro 1;; [pi.Eq;; [uni.Cumulative;;; general.HypEq; uni.Eq];
+   pi.Intro 0;; [sig.Eq;; [general.HypEq;
+       pi.ApEq 1
+         (existT _ _ ltac:(parse' ["x"; "B"; "A"] (ast.Pi "y" "A" (ast.Uni 0))));;
+       [general.HypEq; general.HypEq; uni.Eq]];
+   sig.Elim 0;; [general.Hyp 1]]]]).
+
+
+Definition ast_snd_eq : ast.t :=
+  ast.Eq (ast.Snd (ast.Pair ast.tt ast.tt))
+         (ast.Snd (ast.Pair ast.tt ast.tt))
+         ast.Unit.
+
+Definition snd_eq : expr.t 0 := ltac:(parse ast_snd_eq).
+
+Eval cbv in refiner.prove snd_eq
+   (sig.SndEq 0 (existT _ _ ltac:(parse (ast.Sig "_" ast.Unit ast.Unit))) ;;
+     [sig.PairEq 0 ;; [unit.TTEq; unit.TTEq; unit.Eq];
+      unit.Eq]).
 
 (* End of main development. *)
 
