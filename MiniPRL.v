@@ -902,6 +902,15 @@ Module primitive_tactics (T : TACTIC).
       let 'tactic_result.Make _ binding_structure evidence goals := r in
       rs <- tactic_monad.sequence_hlist (hlist.map _ (fun n g => t2 R n g) goals) ;;
       tactic_monad.ret (result_of_hlist evidence rs).
+
+  Definition try (t : T.t) : T.t :=
+    choose t id.
+
+  Fixpoint repeat (k : nat) (t : T.t) : T.t :=
+    match k with
+    | 0 => id
+    | S k => try (next t (repeat k t))
+    end.
 End primitive_tactics.
 
 Module P := primitive_tactics tactic.
@@ -1525,29 +1534,90 @@ Ltac parse' v e :=
 Definition funext : expr.t 0 := ltac:(parse ast_funext).
 
 (* A few simple notations for the tactics. *)
-Notation "t ;; l" := (P.split t l) (at level 51, right associativity).
-Notation "t1 ;;; t2" := (P.next t1 t2) (at level 51, right associativity).
+Notation "t ;; l" := (P.split t l) (at level 50, left associativity).
+Notation "t1 ;;; t2" := (P.next t1 t2) (at level 50, left associativity).
+Notation "t1 || t2" := (P.choose t1 t2).
+
+Module tac_info.
+  Record t :=
+    Make {
+        i : option nat;
+        e : option {n : nat & expr.t n}
+      }.
+
+  Definition empty : t := Make None None.
+  Definition level (i : nat) : t := Make (Some i) None.
+  Definition arg (e : {n : nat & expr.t n}) : t := Make None (Some e).
+
+  Definition get_i (x : t) {R} : tactic_monad.t R nat :=
+    match i x with
+    | Some i => tactic_monad.ret i
+    | None => tactic_monad.fail
+    end.
+
+  Definition get_e (x : t) {R} : tactic_monad.t R {n : nat & expr.t n} :=
+    match e x with
+    | Some e => tactic_monad.ret e
+    | None => tactic_monad.fail
+    end.
+End tac_info.
+
+Module tac.
+  Definition Intro (info : tac_info.t) : tactic.t.
+    refine (fun R n g => _).
+    refine (tactic_monad.choose
+              [fun _ => unit.Intro g;
+               fun _ => tactic_monad.bind (tac_info.get_i info) (fun i => pi.Intro i g);
+               fun _ => tactic_monad.bind (tac_info.get_i info) (fun i =>
+                     tactic_monad.bind (tac_info.get_e info) (fun e => sig.Intro i e g))]).
+  Defined.
+
+  Definition Eq (info : tac_info.t) : tactic.t.
+    refine (fun R n g => _).
+    refine (tactic_monad.choose
+              [fun _ => unit.Eq g;
+               fun _ => pi.Eq g;
+               fun _ => sig.Eq g;
+               fun _ => uni.Eq g;
+               fun _ => eq.Eq g;
+               fun _ => unit.TTEq g;
+               fun _ => general.HypEq g;
+               fun _ => tactic_monad.bind (tac_info.get_i info) (fun i => pi.LamEq i g);
+               fun _ => tactic_monad.bind (tac_info.get_i info) (fun i => sig.PairEq i g)
+           ]).
+  Defined.
+
+  Definition Assumption : tactic.t.
+    refine (fun R n g => _).
+    refine (let fix go k :=
+                match k with
+                | 0 => P.id g
+                | S k => tactic_monad.choose [fun _ => general.Hyp k g; fun _ => go k]
+                end in _).
+    exact (go n).
+  Defined.
+End tac.
 
 (* Let's prove function extensionality! *)
-Eval cbv in refiner.prove funext
-                (pi.Intro 1 ;; [uni.Eq;
-                 pi.Intro 1 ;; [uni.Eq;
-                 pi.Intro 0 ;; [pi.Eq ;; [general.HypEq; general.HypEq];
-                 pi.Intro 0 ;; [pi.Eq ;; [general.HypEq; general.HypEq];
-                 pi.Intro 0 ;; [pi.Eq ;; [general.HypEq;
-                                    eq.Eq ;; [general.HypEq;
+Eval cbv in
+  let go_eq := P.repeat 10 (tac.Eq tac_info.empty) in
+  refiner.prove funext
+                (pi.Intro 1 ;;; go_eq ;;;
+                 pi.Intro 1 ;;; go_eq ;;;
+                 pi.Intro 0 ;;; go_eq ;;;
+                 pi.Intro 0 ;;; go_eq ;;;
+                 pi.Intro 0 ;;; go_eq ;; [
                         pi.ApEq 0
                            (existT _ _ ltac:(parse' ["x"; "g"; "f"; "B"; "A"]
-                                                    (ast.Pi "_" "A" "B"))) ;;;
-                           general.HypEq;
+                                                    (ast.Pi "_" "A" "B")));;; go_eq;
                         pi.ApEq 0
                            (existT _ _ ltac:(parse' ["x"; "g"; "f"; "B"; "A"]
-                                                    (ast.Pi "_" "A" "B"))) ;;;
-                           general.HypEq]];
-                 pi.FunExt ;; [general.HypEq; general.HypEq;
+                                                    (ast.Pi "_" "A" "B")));;; go_eq;
+                        pi.FunExt;;; go_eq;;;
                         pi.Elim 1
-                          (existT _ _ ltac:(parse' ["x"; "H"; "g"; "f"; "B"; "A"] "x")) ;;
-                          [ general.HypEq; general.Hyp 0 ]]]]]]]).
+                          (existT _ _ ltac:(parse' ["x"; "H"; "g"; "f"; "B"; "A"] "x"));;;
+                          go_eq;;;
+                        tac.Assumption]).
 
 Definition ast_proj1 : ast.t :=
    ast.Pi "A" (ast.Uni 0)
