@@ -1,9 +1,7 @@
 # miniprl-coq
 
 This is a Coq port of
-[MiniPRL](https://github.com/jozefg/miniprl). While it makes
-relatively heavy use of dependent types to keep track of bound
-variables, there aren't really any proofs yet. A longer term goal is
+[MiniPRL](https://github.com/jozefg/miniprl). A longer term goal is
 to implement some of the ideas of
 [Verified NuPRL](http://www.nuprl.org/html/Nuprl2Coq/) by showing the
 rules of the proof theory sound with respect to the underlying
