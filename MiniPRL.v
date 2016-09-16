@@ -62,7 +62,7 @@ Module expr.
 
     Notation "( x , y , .. , z )" := (expr.Pair .. (expr.Pair x y) .. z) : expr_scope.
     Notation "A * B" := (expr.Sig A B) : expr_scope.
-    Notation "A = B 'in' C" := (expr.Eq A B C) (at level 50) : expr_scope.
+    Notation "A = B 'in' C" := (expr.Eq A B C) (at level 70, B at next level) : expr_scope.
 
     Local Open Scope expr.
     Import exports.
@@ -139,6 +139,62 @@ Module expr.
       | Cust g => True
       end.
 
+    Fixpoint dec (n : nat) (e : expr.t) {struct e} : {t n e} + {~ t n e}.
+      refine match e as e0 return {t n e0} + {~ t n e0} with
+      | Var i => lt_dec _ _
+      | Lam e => dec (S n) e
+      | App e1 e2 =>
+        match dec n e1 with
+        | left _ => match dec n e2 with
+                   | left _ => left (conj _ _)
+                   | right _ => right _
+                   end
+        | right _ => right _
+        end
+      | Pi e1 e2 =>
+        match dec n e1 with
+        | left _ => match dec (S n) e2 with
+                   | left _ => left (conj _ _)
+                   | right _ => right _
+                   end
+        | right _ => right _
+        end
+      | Pair e1 e2 =>
+        match dec n e1 with
+        | left _ => match dec n e2 with
+                   | left _ => left (conj _ _)
+                   | right _ => right _
+                   end
+        | right _ => right _
+        end
+      | Fst e => dec n e
+      | Snd e => dec n e
+      | Sig e1 e2 =>
+        match dec n e1 with
+        | left _ => match dec (S n) e2 with
+                   | left _ => left (conj _ _)
+                   | right _ => right _
+                   end
+        | right _ => right _
+        end
+      | tt => left I
+      | Unit => left I
+      | Eq e1 e2 e3 =>
+        match dec n e1 with
+        | left _ => match dec n e2 with
+                   | left _ => match dec n e3 with
+                              | left _ => left _
+                              | right _ => right _
+                              end
+                   | right _ => right _
+                   end
+        | right _ => right _
+        end
+      | Uni i => left I
+      | Cust g => left I
+      end; simpl; intuition.
+    Defined.
+
     Lemma lift :
       forall e n,
         t n e ->
@@ -176,21 +232,27 @@ Module expr.
       induction 2; simpl; auto.
     Qed.
 
+    Lemma lift':
+      forall (n d : nat) (a : expr.t), t n a -> t (d + n) (expr.lift 0 d a).
+    Proof.
+      intros. rewrite <- Nat.add_comm. apply lift.  auto.
+    Qed.
+
     Lemma lift_0_1:
       forall (n' : nat) (a : expr.t), t n' a -> t (S n') (expr.lift 0 1 a).
     Proof.
-      intros. rewrite <- Nat.add_1_r. apply lift.  auto.
+      intros. apply lift' with (d := 1). auto.
     Qed.
 
     Lemma subst :
-      forall e from to,
-        t (S from) e ->
-        t from to ->
-        t from (subst e from to).
+      forall e n from to,
+        t (S n) e ->
+        t n to ->
+        from <= n ->
+        t n (expr.subst e from to).
     Proof.
-      induction e; simpl; intuition auto using lift_0_1.
-      repeat break_match; simpl; auto.
-      omega.
+      induction e; simpl; intuition auto using lift_0_1 with arith.
+      repeat break_match; simpl; auto; omega.
     Qed.
   End wf.
 End expr.
@@ -213,6 +275,15 @@ Module telescope.
                          end
                  end
     end.
+
+  Lemma nth_length C : forall i e, nth C i = Some e -> i < length C.
+  Proof.
+    induction C; simpl; intros.
+    - discriminate.
+    - repeat break_match; try discriminate.
+      + find_inversion. omega.
+      + find_inversion. eauto using lt_n_S.
+  Qed.
 
   Module wf.
     Fixpoint t (k : nat) (C : telescope.t) : Prop :=
@@ -247,14 +318,18 @@ Module sequent.
     }.
 
   Module notations.
-    Notation "H >> C" := (Make H C) (at level 61, right associativity) : sequent_scope.
+    Notation "H >> C" := (Make H C) (at level 81, right associativity) : sequent_scope.
     Bind Scope sequent_scope with sequent.t.
     Delimit Scope sequent_scope with sequent.
   End notations.
 
   Module wf.
+    Import notations.
+    Local Open Scope sequent.
     Definition t (S : sequent.t) : Prop :=
-      let 'Make C G := S in telescope.wf.t 0 C /\ expr.wf.t (length C) G.
+      match S with
+      | H >> C => telescope.wf.t 0 H /\ expr.wf.t (length H) C
+      end.
   End wf.
 End sequent.
 
@@ -272,7 +347,7 @@ Module derivation.
   | Sig_Intro (i : nat) (a : expr.t) (D_A D_B : t) (D_eq : t) : t
   | Sig_Elim (H : nat) (D_C : t) : t
   | Pair_Eq (i : nat) (D_A D_B : t) (D_ty : t) : t
-  | Fst_Eq (sig_ty : expr.t) (D : t) : t
+  | Fst_Eq (B : expr.t) (D : t) : t
   | Snd_Eq (i : nat) (sig_ty : expr.t) (D_a D_B : t) : t
 
   | Unit_Eq : t
@@ -295,41 +370,49 @@ Module derivation.
   | Var_Eq : t
   .
 
-(*
   Module wf.
     Fixpoint t (n : nat) (D : t) : Prop :=
       match D with
-      | derivation.Pi_Eq D_A D_B => t n D_A /\ t (S n) D_B
-      | derivation.Pi_Intro i D_A D_B => t n D_A /\ t (S n) D_B
+      | derivation.Pi_Eq D_A D_B =>
+        t n D_A /\ t (S n) D_B
+      | derivation.Pi_Intro i D_A D_B =>
+        t n D_A /\ t (S n) D_B
       | derivation.Pi_Elim x a D_A D_B =>
-        expr.subst (f D_B) (expr.App (expr.Var x) a :: expr.identity_subst _)
-      | derivation.Lam_Eq i D_A D_B => expr.tt
-      | derivation.Ap_Eq i pi_ty D_fun D_arg D_cod => expr.tt
-      | derivation.Fun_Ext D_lhs D_rhs H => expr.tt
-      | derivation.Sig_Eq _ _ => expr.tt
-      | derivation.Sig_Intro i a D_A D_B D_eq => (expr.Pair a (f D_B))
+        x < n /\ expr.wf.t n a /\ t n D_A /\ t (S n) D_B
+      | derivation.Lam_Eq i D_A D_B =>
+        t n D_A /\ t (S n) D_B
+      | derivation.Ap_Eq i pi_ty D_fun D_arg D_cod =>
+        expr.wf.t n pi_ty /\ t n D_fun /\ t n D_arg /\ t n D_cod
+      | derivation.Fun_Ext D_lhs D_rhs D =>
+        t n D_lhs /\ t n D_rhs /\ t (S n) D
+      | derivation.Sig_Eq D_A D_B =>
+        t n D_A /\ t (S n) D_B
+      | derivation.Sig_Intro i a D_A D_B D_eq =>
+        expr.wf.t n a /\ t n D_A /\ t n D_B /\ t (S n) D_eq
       | derivation.Sig_Elim H D_C =>
-        expr.subst (f D_C) (expr.Snd (expr.Var H) :: expr.Fst (expr.Var H) :: expr.identity_subst _)
-      | derivation.Pair_Eq _ _ _ _ => expr.tt
-      | derivation.Fst_Eq _ _ => expr.tt
-      | derivation.Snd_Eq _ _ _ _ => expr.tt
-      | derivation.Unit_Eq => expr.tt
-      | derivation.tt_Eq => expr.tt
-      | derivation.Unit_Intro => expr.tt
-      | derivation.Eq_Eq D_ty D_lhs D_rhs => expr.tt
-      | derivation.Eq_Mem_Eq D => expr.tt
-      | derivation.Eq_Sym D => expr.tt
-      | derivation.Eq_Subst i a D_ty D_eq D_body => f D_body
-      | derivation.Uni_Eq => expr.tt
-      | derivation.Cumulative D => expr.tt
-      | derivation.Witness w D => w
-      | derivation.Cut g D =>
-        expr.subst (f D) (expr.Cust g :: expr.identity_subst _)
-      | derivation.Var x => expr.Var x
-      | derivation.Var_Eq => expr.tt
+        H < n /\ t (S (S n)) D_C
+      | derivation.Pair_Eq i D_A D_B D_ty =>
+        t n D_A /\ t n D_B /\ t (S n) D_ty
+      | derivation.Fst_Eq B D =>
+        expr.wf.t (S n) B /\ t n D
+      | derivation.Snd_Eq i sig_ty D_a D_B =>
+        expr.wf.t n sig_ty /\ t n D_a /\ t n D_B
+      | derivation.Unit_Eq => True
+      | derivation.tt_Eq => True
+      | derivation.Unit_Intro => True
+      | derivation.Eq_Eq D_ty D_lhs D_rhs =>
+        t n D_ty /\ t n D_lhs /\ t n D_rhs
+      | derivation.Eq_Mem_Eq D => t n D
+      | derivation.Eq_Sym D => t n D
+      | derivation.Eq_Subst i a D_ty D_eq D_body => False (* TODO *)
+      | derivation.Uni_Eq => True
+      | derivation.Cumulative D => t n D
+      | derivation.Witness w D => expr.wf.t n w /\ t n D
+      | derivation.Cut g D => t (S n) D
+      | derivation.Var x => x < n
+      | derivation.Var_Eq => True
       end.
     End wf.
-*)
 End derivation.
 
 Module extract.
@@ -364,190 +447,19 @@ Module extract.
     | derivation.Var x => expr.Var x
     | derivation.Var_Eq => expr.tt
     end.
+
+  Lemma wf : forall D n, derivation.wf.t n D -> expr.wf.t n (f D).
+  Proof.
+    induction D; simpl; intuition.
+    - apply expr.wf.subst; intuition auto with arith.
+      simpl. intuition.
+    - apply expr.wf.subst; intuition auto with arith.
+      apply expr.wf.subst; intuition auto with arith.
+      simpl. intuition.
+    - apply expr.wf.subst; intuition auto with arith.
+      simpl. intuition.
+  Qed.
 End extract.
-
-(*
-Module member.
-  (* A proof-relevant proof that `a` is an element of the list `l`. This will be
-     used as a dependently typed index into an `hlist.t` below. Analogizing to
-     indexing a `Vector.t` with a `Fin.t`, `member.t` generalizes `Fin.t`. *)
-
-  Local Open Scope list.
-  Inductive t {A : Type} (a : A) : list A -> Type :=
-  | Here : forall l, t a (a :: l)
-  | There : forall b l, t a l -> t a (b :: l)
-  .
-  Arguments Here {_ _ _}.
-  Arguments There {_ _ _ _} _.
-
-  (* Useful case analysis schemes that preserve type information. *)
-  Definition case_nil {A} {a : A} {P : Type} (m : t a []) : P :=
-    match m with
-    | Here => I
-    | There m => I
-    end.
-
-  Definition case_cons {A} {a : A} {l} (P : forall a0, t a (a0 :: l) -> Type)
-             (PHere : P _ Here)
-             (PThere : forall a0 m, P a0 (There m))
-             {a0} (m : t a (a0 :: l)) : P a0 m.
-    revert P PHere PThere.
-    refine match m with
-           | Here => _
-           | There m => _
-           end; auto.
-  Defined.
-End member.
-
-Module hlist.
-  (* Heterogeneous lists. *)
-
-  Local Open Scope list.
-  Inductive t {A : Type} (B : A -> Type) : list A -> Type :=
-  | nil : t B []
-  | cons : forall a (b : B a) l (h : t B l), t B (a :: l).
-  Arguments nil {_ _}.
-  Arguments cons {_ _ _} _ {_} _.
-
-  Delimit Scope hlist_scope with hlist.
-  Bind Scope hlist_scope with hlist.t.
-
-  Local Notation "[ ]" := nil : hlist_scope.
-  Local Notation "h :: t" := (cons h t) (at level 60, right associativity) : hlist_scope.
-  Local Notation " [ x ] " := (x :: [])%hlist : hlist_scope.
-  Local Notation " [ x ; y ; .. ; z ] " := (x :: (y :: .. (z :: []) ..))%hlist : hlist_scope.
-
-  Local Open Scope hlist_scope.
-
-  (* Case analysis scheme for cons that preserves as much type information as
-     possible. *)
-  Section case_cons.
-    Variable (A : Type) (B : A -> Type).
-    Variable (a : A) (l : list A) (P : hlist.t B (a :: l) -> Type).
-
-    Hypothesis H : forall b h, P (b :: h).
-
-    Definition case_cons h : P h.
-      revert P H.
-      refine match h with
-             | [] => I
-             | b :: h => fun P H => H b h
-             end.
-    Defined.
-  End case_cons.
-
-  (* Index an hlist by giving a `member.t` as an index. *)
-  Fixpoint get {A} {B : A -> Type} {l} (h : t B l) {a} {struct h} : member.t a l -> B a.
-    refine match h with
-           | [] => fun m => member.case_nil m
-           | b :: h => fun m => _
-           end.
-    destruct a0, m using member.case_cons.
-    - exact b.
-    - exact (get _ _ _ h _ m).
-  Defined.
-
-  (* Now a bunch of utility functions on hlists... *)
-
-  Fixpoint map A (B C : A -> Type) (f : forall a, B a -> C a) l (h : hlist.t B l) : hlist.t C l :=
-    match h with
-    | [] => []
-    | b :: h => f _ b :: map _ f h
-    end.
-
-  Fixpoint of_vector S A (B : A -> Type) (f : S -> forall a, B a) l :
-      Vector.t S (length l) -> hlist.t B l :=
-    match l as l0 return Vector.t S (length l0) -> hlist.t B l0 with
-    | []%list => fun v => []
-    | (a :: l)%list => fun v => Vector.caseS' v _ (fun s v => f s a :: of_vector _ f _ v)
-    end.
-
-  Fixpoint to_list A (B : A -> Type) C (f : forall a, B a -> C) l (h : hlist.t B l) : list C :=
-    match h with
-    | [] => []%list
-    | b :: h => (f _ b :: to_list f h)%list
-    end.
-
-  Fixpoint map_indices_dep A (B : A -> Type) C (D : C -> Type)
-                             (f : forall a, B a -> C)
-                             (g : forall a (b : B a), D (f a b))
-                             l (h : hlist.t B l) :
-      hlist.t D (to_list f h) :=
-    match h as h0 return hlist.t D (to_list f h0) with
-    | [] => []
-    | b :: h => g _ b :: map_indices_dep _ f g h
-    end.
-
-  Fixpoint map2 A (B C D : A -> Type) (f : forall a, B a -> C a -> D a) l
-           (bs : hlist.t B l) : hlist.t C l -> hlist.t D l :=
-    match bs with
-    | [] => fun _ => []
-    | b :: bs => fun cs => case_cons _ (fun c cs => f _ b c :: map2 _ f bs cs) cs
-    end.
-
-  (* oh dear... *)
-  Fixpoint map2_dep A (B : A -> Type) C (D : C -> Type) E (F : E -> Type) (G : A -> Type)
-                      (f : forall a, B a -> C)
-                      (g : forall a, B a -> E)
-                      (h : forall a (b : B a), D (f a b) -> F (g a b) -> G a)
-                      (l : list A) (bs : hlist.t B l) :
-    hlist.t D (to_list f bs) -> hlist.t F (to_list g bs) -> hlist.t G l :=
-    match bs as bs0 in hlist.t _ l0
-    return hlist.t D (to_list f bs0) -> hlist.t F (to_list g bs0) -> hlist.t G l0
-    with
-    | [] => fun _ _ => []
-    | @cons _ _ a b l bs => fun ds fs =>
-      hlist.case_cons (fun _ => hlist.t G (a :: l)) (fun d0 ds =>
-        (hlist.case_cons (fun _ => hlist.t G (a :: l)) (fun f0 fs =>
-          h _ _ d0 f0 :: map2_dep _ f g h _ ds fs
-        ) fs)
-      ) ds
-    end.
-
-  Fixpoint app A (B : A -> Type) l1 (h1 : hlist.t B l1) l2 (h2 : hlist.t B l2) :
-    hlist.t B (l1 ++ l2) :=
-    match h1 in hlist.t _ l10 return hlist.t B (l10 ++ l2) with
-    | [] => h2
-    | b :: h1 => b :: app h1 h2
-    end.
-
-  Fixpoint concat A (B : A -> Type) l (h : hlist.t (hlist.t B) l) : hlist.t B (List.concat l) :=
-    match h in hlist.t _ l0 return hlist.t B (List.concat l0) with
-    | [] => []
-    | bs :: h => app bs (concat h)
-    end.
-
-  Fixpoint unapp A (B : A -> Type) l1 l2 : hlist.t B (l1 ++ l2) -> hlist.t B l1 * hlist.t B l2 :=
-    match l1 as l10 return hlist.t B (l10 ++ l2) -> hlist.t B l10 * hlist.t B l2 with
-    | []%list => fun h => ([], h)
-    | (a :: l1)%list => fun h =>
-      case_cons _ (fun b h =>
-        let (h1, h2) := unapp l1 l2 h
-        in (b :: h1, h2)) h
-    end.
-
-  Fixpoint unconcat A (B : A -> Type) l : hlist.t B (List.concat l) -> hlist.t (hlist.t B) l :=
-    match l with
-    | []%list => fun _ => []
-    | (a :: l)%list => fun h =>
-      let '(h1, h2) := unapp a (List.concat l) h
-      in h1 :: unconcat l h2
-    end.
-
-
-  Module notations.
-    Delimit Scope hlist_scope with hlist.
-    Bind Scope hlist_scope with hlist.t.
-
-    Notation "[ ]" := nil : hlist_scope.
-    Notation "h :: t" := (cons h t) (at level 60, right associativity) : hlist_scope.
-    Notation " [ x ] " := (x :: [])%hlist : hlist_scope.
-    Notation " [ x ; y ; .. ; z ] " := (x :: (y :: .. (z :: []) ..))%hlist : hlist_scope.
-
-  End notations.
-End hlist.
-Import hlist.notations.
-*)
 
 Module tactic_monad.
   (* This is just a straight port of MiniPRL's tactic monad. Made possible by
@@ -571,22 +483,6 @@ Module tactic_monad.
     | x :: xs => bind x (fun a => map (List.cons a) (sequence xs))
     end%list.
 
-  (*
-  (* Here are two analogous operations: sequencing vectors and hlists. *)
-  Fixpoint sequence_vector {R A} {n} (v : Vector.t (t R A) n) : t R (Vector.t A n) :=
-    match v with
-    | [] => ret []
-    | x :: xs => bind x (fun a => map (Vector.cons a) (sequence_vector xs))
-    end.
-
-  Fixpoint sequence_hlist {R} {A} {B : A -> Type} {l} (h : hlist.t (fun a => t R (B a)) l) :
-    t R (hlist.t B l) :=
-    match h with
-    | hlist.nil => ret hlist.nil
-    | hlist.cons x xs => bind x (fun a => map (hlist.cons a) (sequence_hlist xs))
-    end.
-  *)
-
   Definition fail {R A} : t R A := fun _ => None.
 
   Fixpoint choose {R A} (l : list (unit -> t R A)) : t R A :=
@@ -600,11 +496,32 @@ Module tactic_monad.
 
   Definition run {A} (x : t A A) : option A := x (@Some _).
 
-  Module notations.
-  Notation "m >>= f" := (bind m f) (at level 61, right associativity) : tactic_monad.
-  Notation "m1 >> m2" := (bind m1 (fun _ => m2)) (at level 61, right associativity) : tactic_monad.
+  Definition assume_sb {A B R} (x : {A} + {B}) : tactic_monad.t R A :=
+    match x with
+    | left a => tactic_monad.ret a
+    | _ => tactic_monad.fail
+    end.
 
-  Notation "x <- m ;; f" := (bind m (fun x => f)) (at level 61, right associativity) : tactic_monad.
+  Definition assume_so {A B R} (x : A + {B}) : tactic_monad.t R A :=
+    match x with
+    | inleft a => tactic_monad.ret a
+    | _ => tactic_monad.fail
+    end.
+
+  Definition unwrap {A R} (x : option A) : tactic_monad.t R A :=
+    match x with
+    | Some a => tactic_monad.ret a
+    | None => tactic_monad.fail
+    end.
+
+  Ltac unfold_tactic_monad :=
+    unfold unwrap, assume_so, assume_sb, run, ap, map, bind, ret in *.
+
+  Module notations.
+  Notation "m >>= f" := (bind m f) (at level 81, right associativity) : tactic_monad.
+  Notation "m1 >> m2" := (bind m1 (fun _ => m2)) (at level 81, right associativity) : tactic_monad.
+
+  Notation "x <- m ;; f" := (bind m (fun x => f)) (at level 81, right associativity) : tactic_monad.
   End notations.
 
 End tactic_monad.
@@ -617,6 +534,12 @@ Module tactic_result.
         goals : list G;
       }.
   Arguments Make {_ _} _ _.
+
+  Module wf.
+    Definition t {D G} (P : G -> D -> Prop) g0 (r : t D G) : Prop :=
+      forall ds, List.Forall2 (fun d g => P g d) ds (goals r) ->
+            exists d, evidence r ds = Some d /\ P g0 d.
+  End wf.
 End tactic_result.
 
 Module Type TACTIC.
@@ -666,6 +589,8 @@ Definition option_bind {A B} (m : option A) (f : A -> option B) : option B :=
   end.
 
 Module primitive_tactics (T : TACTIC).
+  Import tactic_monad.
+
   Definition id : T.t :=
     fun R g => tactic_monad.ret (tactic_result.Make
                                 (fun l => List.hd_error l)
@@ -717,25 +642,7 @@ Module primitive_tactics (T : TACTIC).
     | Some x => sequence_option x
     end.
 
-  Definition assume_sb {A B R} (x : {A} + {B}) : tactic_monad.t R A :=
-    match x with
-    | left a => tactic_monad.ret a
-    | _ => tactic_monad.fail
-    end.
-
-  Definition assume_so {A B R} (x : A + {B}) : tactic_monad.t R A :=
-    match x with
-    | inleft a => tactic_monad.ret a
-    | _ => tactic_monad.fail
-    end.
-
   Local Open Scope tactic_monad.
-
-  Definition unwrap {A R} (x : option A) : tactic_monad.t R A :=
-    match x with
-    | Some a => tactic_monad.ret a
-    | None => tactic_monad.fail
-    end.
 
   Definition split (t : T.t) (ts : list T.t) : T.t :=
     fun R g =>
@@ -803,6 +710,49 @@ Module rules.
              end)
       [g1; g2; g3].
 
+  Module wf.
+    Definition t (rule : tactic.t) : Prop :=
+      forall g res,
+        sequent.wf.t g ->
+        run (rule _ g) = Some res ->
+        tactic_result.wf.t (fun g d => derivation.wf.t (length (sequent.context g)) d) g res /\
+        List.Forall sequent.wf.t (tactic_result.goals res).
+  End wf.
+
+    Ltac head_symbol e :=
+      match e with
+      | ?f ?x => head_symbol f
+      | _ => e
+      end.
+
+    Ltac crush_wf :=
+      match goal with
+      | [ |- wf.t ?f ] => let x := head_symbol f in unfold x
+      end;
+      unfold wf.t;
+      intros;
+      unfold_tactic_monad;
+      repeat break_match; try discriminate;
+      find_inversion;
+      unfold nullary_derivation, unary_derivation, binary_derivation, ternary_derivation;
+      simpl in *; repeat break_and; split; [
+        unfold tactic_result.wf.t; simpl; intros;
+        repeat match goal with
+               | [ H : Forall2 _ _ _ |- _ ] => invc H
+               end;
+        eexists; intuition eauto; simpl in *; intuition;
+        eauto using telescope.nth_length
+      | unfold sequent.wf.t in *;
+        repeat (apply Forall_cons || apply Forall_nil); simpl; intuition;
+        try match goal with
+        | [ H : telescope.nth _ _ = Some _ |- expr.wf.t _ _ ] =>
+          eapply telescope.nth_wf in H; [|solve[eauto]]; simpl in H; intuition
+        end ];
+      auto using expr.wf.subst with arith;
+      try match goal with
+      | [  |- expr.wf.t _ (expr.lift _ ?n _) ] =>
+        solve [apply expr.wf.lift' with (d := n); auto]
+      end.
 
   Module unit.
     (* H >> unit = unit in U(i) *)
@@ -814,6 +764,9 @@ Module rules.
       | _ => fail
       end.
 
+    Lemma Eq_wf : wf.t Eq.
+    Proof. crush_wf. Qed.
+
     (* H >> unit *)
     Definition Intro : tactic.t :=
       fun R g =>
@@ -821,6 +774,9 @@ Module rules.
       | H >> expr.Unit => ret (nullary_derivation derivation.Unit_Intro)
       | _ => fail
       end.
+
+    Lemma Intro_wf : wf.t Intro.
+    Proof. crush_wf. Qed.
 
     (* H >> tt = tt in unit *)
     Definition TTEq : tactic.t :=
@@ -830,6 +786,9 @@ Module rules.
         ret (nullary_derivation derivation.tt_Eq)
       | _ => fail
       end.
+
+    Lemma TTEq_wf : wf.t TTEq.
+    Proof. crush_wf. Qed.
   End unit.
 
   Module pi.
@@ -847,6 +806,9 @@ Module rules.
       | _ => fail
       end.
 
+    Lemma Eq_wf : wf.t Eq.
+    Proof. crush_wf. Qed.
+
     (* H >> x:A -> B
          H >> A = A in U(i)
          H, x:A >> B *)
@@ -860,6 +822,9 @@ Module rules.
       | _ => fail
       end.
 
+    Lemma Intro_wf i : wf.t (Intro i).
+    Proof. crush_wf. Qed.
+
     (* H >> C
          H(n) = x:A -> B
          H >> e = e in A
@@ -869,6 +834,7 @@ Module rules.
       fun R g =>
       match g with
       | H >> C =>
+        _ <- assume_sb (expr.wf.dec (length H) e) ;;
         ty <- unwrap (telescope.nth H n) ;;
         match ty with
         | expr.Pi A B =>
@@ -878,6 +844,9 @@ Module rules.
         | _ => fail
         end
       end.
+
+    Lemma Elim_wf n e : wf.t (Elim n e).
+    Proof. crush_wf. Qed.
 
     (* H >> \x.e = \x.e' in x:A -> B
          H >> A = A in U(i)
@@ -892,6 +861,9 @@ Module rules.
       | _ => fail
       end.
 
+    Lemma LamEq_wf i : wf.t (LamEq i).
+    Proof. crush_wf. Qed.
+
     (* H >> n1 m1 = n2 m2 in T
          H >> n1 = n2 in x:A -> B
          H >> m1 = m2 in A
@@ -900,6 +872,7 @@ Module rules.
       fun R g =>
       match g with
       | H >> expr.Eq (expr.App n1 m1) (expr.App n2 m2) T =>
+        _ <- assume_sb (expr.wf.dec (length H) ty) ;;
         match ty with
         | expr.Pi A B =>
           ret (ternary_derivation (derivation.Ap_Eq i (expr.Pi A B))
@@ -910,6 +883,9 @@ Module rules.
         end
       | _ => fail
       end.
+
+    Lemma ApEq_wf i ty : wf.t (ApEq i ty).
+    Proof. crush_wf. Qed.
 
     (* H >> e1 = e2 in x:A -> B
            H >> e1 = e1 in x:A -> B
@@ -928,6 +904,9 @@ Module rules.
 
       | _ => fail
       end.
+
+    Lemma FunExt_wf : wf.t FunExt.
+    Proof. crush_wf. Qed.
   End pi.
 
   Module uni.
@@ -942,6 +921,10 @@ Module rules.
       | _ => fail
       end.
 
+    Lemma Eq_wf : wf.t Eq.
+    Proof. crush_wf. Qed.
+
+
     (* H >> A = B in U(i+1)
          H >> A = B in U(i) *)
     Definition Cumulative : tactic.t :=
@@ -952,6 +935,9 @@ Module rules.
                 (H >> expr.Eq A B (expr.Uni i)))
       | _ => fail
       end.
+
+    Lemma Cumulative_Eq : wf.t Cumulative.
+    Proof. crush_wf. Qed.
   End uni.
 
   Module general.
@@ -966,6 +952,9 @@ Module rules.
         ret (nullary_derivation (derivation.Var n))
       end.
 
+    Lemma Hyp_wf n : wf.t (Hyp n).
+    Proof. crush_wf. Qed.
+
     (* H >> x = x in A
          H(x) = A *)
     Definition HypEq : tactic.t :=
@@ -978,6 +967,9 @@ Module rules.
         ret (nullary_derivation derivation.Var_Eq)
       | _ => fail
       end.
+
+    Lemma HypEq_wf : wf.t HypEq.
+    Proof. crush_wf. Qed.
   End general.
 
   Module eq.
@@ -995,6 +987,9 @@ Module rules.
                 (H >> expr.Eq n1 n2 A1))
       | _ => fail
       end.
+
+    Lemma Eq_wf : wf.t Eq.
+    Proof. crush_wf. Qed.
   End eq.
 
   Import expr.exports.
@@ -1015,6 +1010,9 @@ Module rules.
       | _ => fail
       end.
 
+    Lemma Eq_wf : wf.t Eq.
+    Proof. crush_wf. Qed.
+
     (* H >> x:A * B
          H >> a = a in A
          H >> [a/x]B
@@ -1023,12 +1021,16 @@ Module rules.
       fun R g =>
       match g with
       | H >> A * B =>
+        _ <- assume_sb (expr.wf.dec (length H) a) ;;
         ret (ternary_derivation (derivation.Sig_Intro i a)
                 (H >> a = a in A)
                 (H >> expr.subst B 0 a)
                 (A :: H >> B = B in Uni i))
       | _ => fail
       end.
+
+    Lemma Intro_wf i a : wf.t (Intro i a).
+    Proof. crush_wf. Qed.
 
     (* H >> C
          H(n) = x:A * B
@@ -1046,6 +1048,9 @@ Module rules.
         end
       end.
 
+    Lemma Elim_wf n : wf.t (Elim n).
+    Proof. crush_wf. Qed.
+
     (* H >> (a,b) = (a',b') in x:A * B
          H >> a = a' in A
          H >> b = b' in [a/x]B
@@ -1061,6 +1066,9 @@ Module rules.
       | _ => fail
       end.
 
+    Lemma PairEq_wf i : wf.t (PairEq i).
+    Proof. crush_wf. Qed.
+
     (* H >> fst m1 = fst m2 in A
          H >> m1 = m2 in A * B
      *)
@@ -1068,11 +1076,14 @@ Module rules.
       fun R g =>
       match g with
       | H >> expr.Fst m1 = expr.Fst m2 in A =>
+        _ <- assume_sb (expr.wf.dec (S (length H)) B) ;;
         ret (unary_derivation (derivation.Fst_Eq B)
                 (H >> m1 = m2 in A * B))
       | _ => fail
       end.
 
+    Lemma FstEq_wf B : wf.t (FstEq B).
+    Proof. crush_wf. Qed.
 
     (* H >> snd m1 = snd m2 in C
          H >> m1 = m2 in x:A * B
@@ -1081,6 +1092,7 @@ Module rules.
       fun R g =>
       match g with
       | H >> expr.Snd m1 = expr.Snd m2 in C =>
+        _ <- assume_sb (expr.wf.dec (length H) ty) ;;
         match ty with
         | A * B =>
           ret (binary_derivation (derivation.Snd_Eq i ty)
@@ -1090,6 +1102,10 @@ Module rules.
         end
       | _ => fail
       end.
+
+
+    Lemma SndEq_wf i ty : wf.t (SndEq i ty).
+    Proof. crush_wf. Qed.
   End sig.
 End rules.
 Import rules.
@@ -1148,7 +1164,7 @@ Module ast.
     Notation "( x , y , .. , z )" := (ast.Pair .. (ast.Pair x y) .. z) : ast_scope.
     Notation "{ x : A } * B" := (ast.Sig x A B) (at level 0, x at level 99, B at level 200) : ast_scope.
     Notation "A * B" := (ast.Sig "_" A B) : ast_scope.
-    Notation "A = B 'in' C" := (ast.Eq A B C) (at level 50) : ast_scope.
+    Notation "A = B 'in' C" := (ast.Eq A B C) (at level 70, B at next level) : ast_scope.
 
     Local Open Scope ast.
     Import String.
